@@ -1,38 +1,114 @@
 import React, { JSX, useEffect, useMemo, useState } from 'react';
-import LoadingSpinner from '../components/loading-spinner/LoadingSpinner';
-import SearchBar from '../components/search-bar/SeachBar';
-import SortSelector, {SortOption} from '../components/sort-selector/SortSelector';
-import TypeSelector from '../components/type-selector/TypeSelector';
-import PokemonCard from '../components/pokemon-card/PokemonCard';
+import LoadingSpinner from '../components/LoadingSpinner';
+import SearchBar from '../components/SeachBar';
+import SortSelector, { SortOption } from '../components/SortSelector';
+import TypeSelector from '../components/TypeSelector';
+import PokemonCard from '../components/PokemonCard';
 import {
     fetchAllPokemonNames,
+    fetchCaughtPokemons,
     fetchPokemonTypes,
     fetchPokemonsByType,
     searchPokemons,
-} from '../lib/pokemonApi';
-import type { PokemonListItem, PokemonTypeSummary } from '../lib/pokemonModels';
+} from '../service/pokemon/pokemonService';
+import type { PokemonDetailsResponse, PokemonListItem, PokemonTypeSummary } from '../service/pokemon/pokemonModels';
+
+const HOME_FILTERS_STORAGE_KEY: string = 'poketcher_home_filters';
+
+type HomeFiltersState = {
+    selectedType: string;
+    selectedSort: SortOption;
+    query: string;
+    showCaughtOnly: boolean;
+};
+
+function getSavedHomeFilters(): HomeFiltersState {
+    const rawValue: string | null = sessionStorage.getItem(HOME_FILTERS_STORAGE_KEY);
+
+    if (!rawValue) {
+        return {
+            selectedType: 'all',
+            selectedSort: 'id-asc',
+            query: '',
+            showCaughtOnly: false,
+        };
+    }
+
+    try {
+        const parsed: unknown = JSON.parse(rawValue);
+
+        if (
+            typeof parsed === 'object' &&
+            parsed !== null &&
+            'selectedType' in parsed &&
+            'selectedSort' in parsed &&
+            'query' in parsed &&
+            'showCaughtOnly' in parsed
+        ) {
+            const typed = parsed as HomeFiltersState;
+            return {
+                selectedType: typeof typed.selectedType === 'string' ? typed.selectedType : 'all',
+                selectedSort:
+                    typed.selectedSort === 'id-asc' ||
+                    typed.selectedSort === 'id-desc' ||
+                    typed.selectedSort === 'name-asc' ||
+                    typed.selectedSort === 'name-desc'
+                        ? typed.selectedSort
+                        : 'id-asc',
+                query: typeof typed.query === 'string' ? typed.query : '',
+                showCaughtOnly: typeof typed.showCaughtOnly === 'boolean' ? typed.showCaughtOnly : false,
+            };
+        }
+    } catch {
+        // ignore malformed storage
+    }
+
+    return {
+        selectedType: 'all',
+        selectedSort: 'id-asc',
+        query: '',
+        showCaughtOnly: false,
+    };
+}
 
 export default function Home(): JSX.Element {
+    const savedFilters: HomeFiltersState = getSavedHomeFilters();
+
     const [types, setTypes] = useState<PokemonTypeSummary[]>([]);
     const [pokemons, setPokemons] = useState<PokemonListItem[]>([]);
     const [allPokemons, setAllPokemons] = useState<PokemonListItem[]>([]);
-    const [selectedType, setSelectedType] = useState<string>('all');
-    const [selectedSort, setSelectedSort] = useState<SortOption>('id-asc');
-    const [query, setQuery] = useState<string>('');
+    const [caughtPokemons, setCaughtPokemons] = useState<PokemonDetailsResponse[]>([]);
+    const [selectedType, setSelectedType] = useState<string>(savedFilters.selectedType);
+    const [selectedSort, setSelectedSort] = useState<SortOption>(savedFilters.selectedSort);
+    const [query, setQuery] = useState<string>(savedFilters.query);
+    const [showCaughtOnly, setShowCaughtOnly] = useState<boolean>(savedFilters.showCaughtOnly);
     const [isLoading, setIsLoading] = useState<boolean>(true);
+
+    useEffect((): void => {
+        const filters: HomeFiltersState = {
+            selectedType,
+            selectedSort,
+            query,
+            showCaughtOnly,
+        };
+
+        sessionStorage.setItem(HOME_FILTERS_STORAGE_KEY, JSON.stringify(filters));
+    }, [selectedType, selectedSort, query, showCaughtOnly]);
 
     useEffect((): void => {
         const loadInitialData = async (): Promise<void> => {
             setIsLoading(true);
             try {
-                const [typesData, namesData] = await Promise.all([
+                const [typesData, namesData, caughtData] = await Promise.all([
                     fetchPokemonTypes(),
                     fetchAllPokemonNames(),
+                    fetchCaughtPokemons(),
                 ]);
 
                 setTypes(typesData);
                 setAllPokemons(namesData);
                 setPokemons(namesData);
+                setCaughtPokemons(caughtData);
             } finally {
                 setIsLoading(false);
             }
@@ -45,6 +121,20 @@ export default function Home(): JSX.Element {
         const loadFilteredPokemons = async (): Promise<void> => {
             setIsLoading(true);
             try {
+                if (showCaughtOnly) {
+                    const caughtData: PokemonDetailsResponse[] = await fetchCaughtPokemons();
+                    setCaughtPokemons(caughtData);
+
+                    setPokemons(
+                        caughtData.map((pokemon: PokemonDetailsResponse): PokemonListItem => ({
+                            id: pokemon.id,
+                            name: pokemon.name,
+                            url: `${window.location.origin}/pokemon/${pokemon.id}`,
+                        })),
+                    );
+                    return;
+                }
+
                 if (query.trim().length >= 2) {
                     const searchResults = await searchPokemons(query.trim());
                     setPokemons(searchResults);
@@ -64,7 +154,7 @@ export default function Home(): JSX.Element {
         };
 
         void loadFilteredPokemons();
-    }, [query, selectedType, allPokemons]);
+    }, [query, selectedType, showCaughtOnly, allPokemons]);
 
     const sortedPokemons = useMemo<PokemonListItem[]>((): PokemonListItem[] => {
         const list = [...pokemons];
@@ -92,10 +182,17 @@ export default function Home(): JSX.Element {
                             setQuery(value);
                             if (value.trim().length >= 2) {
                                 setSelectedType('all');
+                                setShowCaughtOnly(false);
                             }
                         }}
-                        showCaughtOnly={false}
-                        onCaughtToggle={(): void => undefined}
+                        showCaughtOnly={showCaughtOnly}
+                        onCaughtToggle={(checked: boolean): void => {
+                            setShowCaughtOnly(checked);
+                            if (checked) {
+                                setQuery('');
+                                setSelectedType('all');
+                            }
+                        }}
                     />
                 </div>
 
@@ -106,6 +203,7 @@ export default function Home(): JSX.Element {
                         onTypeChange={(value: string): void => {
                             setSelectedType(value);
                             setQuery('');
+                            setShowCaughtOnly(false);
                         }}
                         isLoading={isLoading}
                     />
@@ -119,14 +217,20 @@ export default function Home(): JSX.Element {
                     <LoadingSpinner text="Pokémonok betöltése..." />
                 ) : (
                     <div className="pokemon-grid">
-                        {sortedPokemons.map((pokemon: PokemonListItem): JSX.Element => (
-                            <PokemonCard
-                                key={pokemon.id}
-                                pokemon={{ ...pokemon, types: [] }}
-                                isCaught={false}
-                                types={[]}
-                            />
-                        ))}
+                        {sortedPokemons.map((pokemon: PokemonListItem): JSX.Element => {
+                            const caught: boolean = caughtPokemons.some(
+                                (caughtPokemon: PokemonDetailsResponse): boolean => caughtPokemon.id === pokemon.id,
+                            );
+
+                            return (
+                                <PokemonCard
+                                    key={pokemon.id}
+                                    pokemon={{ ...pokemon, types: [] }}
+                                    isCaught={caught}
+                                    types={[]}
+                                />
+                            );
+                        })}
                     </div>
                 )}
             </div>

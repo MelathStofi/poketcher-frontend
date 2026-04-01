@@ -1,7 +1,7 @@
-import React, {JSX} from 'react';
+import React, { JSX, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { getPokemonSpriteUrl } from '../../lib/pokemonApi';
-import TypeBadge from "../type-badge/TypeBadge";
+import { getPokemonSpriteUrl, preloadPokemonImage } from '../service/pokemon/pokemonService';
+import TypeBadge from './TypeBadge';
 
 type PokemonCardProps = {
     pokemon: {
@@ -15,6 +15,10 @@ type PokemonCardProps = {
 
 export default function PokemonCard({ pokemon, isCaught, types }: PokemonCardProps): JSX.Element {
     const imageUrl: string = getPokemonSpriteUrl(pokemon.id);
+
+    useEffect((): void => {
+        preloadPokemonImage(pokemon.id);
+    }, [pokemon.id]);
 
     return (
         <Link

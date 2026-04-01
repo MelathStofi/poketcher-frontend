@@ -1,6 +1,6 @@
 import React, {JSX} from 'react';
 import { Outlet } from 'react-router-dom';
-import Navbar from '../navbar/Navbar';
+import Navbar from './Navbar';
 
 export default function AppLayout(): JSX.Element {
     return (
